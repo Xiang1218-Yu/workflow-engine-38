@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { CreateWorkflowInput, Workflow, WorkflowRun, WorkflowStep } from "../../shared/types.js";
+import type { CreateWorkflowInput, StepRunSummary, Workflow, WorkflowRun, WorkflowStep } from "../../shared/types.js";
+
+/** Hard cap on steps per workflow so run payloads (and the run inspector) stay manageable. */
+export const MAX_STEPS_PER_WORKFLOW = 500;
 
 export class WorkflowStore {
   private readonly workflows = new Map<string, Workflow>();
@@ -54,7 +57,8 @@ export class WorkflowStore {
       status: "queued",
       startedAt: new Date().toISOString(),
       logs: [],
-      variables: {}
+      variables: {},
+      stepSummaries: []
     };
     this.runs.set(run.id, run);
     return run;
@@ -88,10 +92,33 @@ export class WorkflowStore {
     if (!run) throw new Error(`Run ${id} not found`);
     run.variables[key] = value;
   }
+
+  /** Pre-populate one summary row per step, in execution order, before the run starts. */
+  initStepSummaries(id: string, summaries: StepRunSummary[]): void {
+    const run = this.runs.get(id);
+    if (!run) throw new Error(`Run ${id} not found`);
+    run.stepSummaries = summaries;
+  }
+
+  updateStepSummary(id: string, position: number, update: Partial<StepRunSummary>): void {
+    const run = this.runs.get(id);
+    if (!run) throw new Error(`Run ${id} not found`);
+    const summary = run.stepSummaries?.find((entry) => entry.position === position);
+    if (summary) Object.assign(summary, update);
+  }
+
+  /** Steps that never ran (e.g. after a failure) become explicitly "skipped" instead of staying pending. */
+  markPendingStepsSkipped(id: string): void {
+    const run = this.runs.get(id);
+    if (!run) throw new Error(`Run ${id} not found`);
+    for (const summary of run.stepSummaries ?? []) {
+      if (summary.status === "pending") summary.status = "skipped";
+    }
+  }
 }
 
 export function validateSteps(steps: unknown): steps is WorkflowStep[] {
-  if (!Array.isArray(steps) || steps.length === 0) return false;
+  if (!Array.isArray(steps) || steps.length === 0 || steps.length > MAX_STEPS_PER_WORKFLOW) return false;
   return steps.every((step) => {
     if (!step || typeof step !== "object") return false;
     const candidate = step as Record<string, unknown>;

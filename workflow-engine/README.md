@@ -9,6 +9,7 @@ A small but extensible configurable automation workflow engine built with React 
 - Execute a saved workflow through the API.
 - In-memory workflow/run storage with seeded example data.
 - Live run status, variables, and execution log polling in the UI.
+- Expandable per-step input/output summaries in the run inspector: variable diffs before/after each step, per-step timing, and distinct states for waiting, failed, and skipped steps. Sensitive variable values are masked, long values truncated, and runs recorded before this feature degrade gracefully to the plain log view.
 - Lightweight Node `http` server with no runtime backend dependency.
 - Basic API tests using Node's built-in test runner.
 
@@ -18,11 +19,13 @@ A small but extensible configurable automation workflow engine built with React 
 workflow-engine/
 ├── client/              # React + Vite UI
 │   ├── src/App.tsx      # Builder and run inspector
+│   ├── src/StepTimeline.tsx  # Per-step summary timeline in the run inspector
 │   ├── src/api.ts       # Typed API client
 │   └── src/styles.css
 ├── server/
 │   ├── src/app.ts       # HTTP API and routing
-│   ├── src/engine.ts    # Step execution engine
+│   ├── src/engine.ts    # Step execution engine (records per-step summaries)
+│   ├── src/summary.ts   # Masking, truncation, and variable-diff helpers
 │   ├── src/store.ts     # In-memory repository and validation
 │   └── src/app.test.ts  # API/integration tests
 ├── shared/types.ts      # Shared workflow and run contracts
@@ -56,7 +59,7 @@ npm start      # Start compiled API (after npm run build)
 - `GET /api/workflows/:id` — get one workflow
 - `GET /api/workflows/:id/runs` — list runs for a workflow
 - `POST /api/workflows/:id/runs` — start an asynchronous run
-- `GET /api/runs/:id` — inspect status, logs, and variables
+- `GET /api/runs/:id` — inspect status, logs, variables, and per-step summaries (`stepSummaries`, absent on older runs)
 
 Example step payload:
 

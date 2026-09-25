@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CreateWorkflowInput, StepType, Workflow, WorkflowRun, WorkflowStep } from "../../shared/types";
 import { api } from "./api";
+import { StepTimeline } from "./StepTimeline";
+
+/** Only the latest log lines are rendered so very chatty runs cannot freeze the page. */
+const MAX_VISIBLE_LOGS = 200;
 
 const emptySteps: WorkflowStep[] = [{ id: crypto.randomUUID(), type: "log", message: "Hello from my workflow" }];
 
@@ -128,7 +132,7 @@ export function App() {
             </div>
           </div>
 
-          <section className="run-card"><div className="run-header"><div><p className="eyebrow">OBSERVABILITY</p><h2>Latest run</h2></div>{run ? <span className={`status ${run.status}`}><i /> {run.status}</span> : <span className="status idle"><i /> not started</span>}</div>{run ? <div className="run-content"><div className="run-meta"><span>RUN ID <strong>{run.id.slice(0, 8)}…</strong></span><span>STARTED <strong>{new Date(run.startedAt).toLocaleTimeString()}</strong></span><span>VARIABLES <strong>{Object.keys(run.variables).length}</strong></span></div><div className="log-console">{run.logs.map((log, index) => <div className={`log-line ${log.level}`} key={`${log.at}-${index}`}><time>{new Date(log.at).toLocaleTimeString()}</time><span className="log-bullet">{log.level === "error" ? "!" : "›"}</span><span>{log.message}</span></div>)}{run.logs.length === 0 && <span className="muted">Waiting for execution…</span>}</div></div> : <div className="empty-run"><span className="pulse">◌</span><p>Run this workflow to see live execution logs and variables.</p></div>}</section>
+          <section className="run-card"><div className="run-header"><div><p className="eyebrow">OBSERVABILITY</p><h2>Latest run</h2></div>{run ? <span className={`status ${run.status}`}><i /> {run.status}</span> : <span className="status idle"><i /> not started</span>}</div>{run ? <div className="run-content"><div className="run-meta"><span>RUN ID <strong>{run.id.slice(0, 8)}…</strong></span><span>STARTED <strong>{new Date(run.startedAt).toLocaleTimeString()}</strong></span><span>VARIABLES <strong>{Object.keys(run.variables).length}</strong></span></div>{run.stepSummaries === undefined ? <p className="muted timeline-fallback">Step-by-step summaries are not available for this run (it was recorded before summaries were introduced). The execution log below still shows what happened.</p> : run.stepSummaries.length > 0 ? <StepTimeline key={run.id} summaries={run.stepSummaries} /> : null}<div className="log-console">{run.logs.slice(-MAX_VISIBLE_LOGS).map((log, index) => <div className={`log-line ${log.level}`} key={`${log.at}-${index}`}><time>{new Date(log.at).toLocaleTimeString()}</time><span className="log-bullet">{log.level === "error" ? "!" : "›"}</span><span>{log.message}</span></div>)}{run.logs.length === 0 && <span className="muted">Waiting for execution…</span>}</div>{run.logs.length > MAX_VISIBLE_LOGS && <p className="muted log-truncated">Showing the latest {MAX_VISIBLE_LOGS} of {run.logs.length} log lines.</p>}</div> : <div className="empty-run"><span className="pulse">◌</span><p>Run this workflow to see live execution logs and variables.</p></div>}</section>
         </section>
       </div>
     </main>
