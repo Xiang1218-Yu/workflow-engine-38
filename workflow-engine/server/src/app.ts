@@ -1,13 +1,27 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { executeWorkflow } from "./engine.js";
 import { validateSteps, WorkflowStore } from "./store.js";
-import type { CreateWorkflowInput } from "../../shared/types.js";
+import { isSensitiveKey } from "./telemetry.js";
+import type { CreateWorkflowInput, WorkflowRun } from "../../shared/types.js";
 
 const jsonHeaders = { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" };
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, jsonHeaders);
   res.end(JSON.stringify(body));
+}
+
+/**
+ * API-facing view of a run. The engine keeps real variable values internally so
+ * {{interpolation}} keeps working, but sensitive values are masked at the HTTP
+ * boundary so they never reach the client.
+ */
+function serializeRun(run: WorkflowRun): WorkflowRun {
+  const variables: Record<string, string> = {};
+  for (const [key, value] of Object.entries(run.variables)) {
+    variables[key] = isSensitiveKey(key) ? "********" : value;
+  }
+  return { ...run, variables };
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -54,17 +68,19 @@ export function createApp(store = new WorkflowStore()) {
         if (!workflow) return send(res, 404, { error: "Workflow not found" });
 
         if (req.method === "GET" && parts.length === 3) return send(res, 200, { workflow });
-        if (req.method === "GET" && parts.length === 4 && parts[3] === "runs") return send(res, 200, { runs: store.listRuns(workflow.id) });
+        if (req.method === "GET" && parts.length === 4 && parts[3] === "runs") {
+          return send(res, 200, { runs: store.listRuns(workflow.id).map(serializeRun) });
+        }
         if (req.method === "POST" && parts.length === 4 && parts[3] === "runs") {
           const run = store.createRun(workflow.id);
           void executeWorkflow(store, workflow, run);
-          return send(res, 202, { run });
+          return send(res, 202, { run: serializeRun(run) });
         }
       }
 
       if (req.method === "GET" && parts.length === 3 && parts[1] === "runs") {
         const run = store.getRun(parts[2]);
-        return run ? send(res, 200, { run }) : send(res, 404, { error: "Run not found" });
+        return run ? send(res, 200, { run: serializeRun(run) }) : send(res, 404, { error: "Run not found" });
       }
 
       return send(res, 404, { error: "Not found" });

@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { CreateWorkflowInput, Workflow, WorkflowRun, WorkflowStep } from "../../shared/types.js";
+import type {
+  CreateWorkflowInput,
+  StepSummary,
+  StepSummaryStatus,
+  Workflow,
+  WorkflowRun,
+  WorkflowStep
+} from "../../shared/types.js";
+import { MAX_STEP_SUMMARIES } from "./telemetry.js";
 
 export class WorkflowStore {
   private readonly workflows = new Map<string, Workflow>();
@@ -54,7 +62,8 @@ export class WorkflowStore {
       status: "queued",
       startedAt: new Date().toISOString(),
       logs: [],
-      variables: {}
+      variables: {},
+      stepSummaries: []
     };
     this.runs.set(run.id, run);
     return run;
@@ -87,6 +96,60 @@ export class WorkflowStore {
     const run = this.runs.get(id);
     if (!run) throw new Error(`Run ${id} not found`);
     run.variables[key] = value;
+  }
+
+  // --- Step summary telemetry -------------------------------------------------
+  // Every method below is best-effort: a telemetry failure must never propagate
+  // into workflow execution or change the run status. They return false when the
+  // summary could not be recorded so callers can ignore it.
+
+  startStepSummary(id: string, summary: StepSummary): boolean {
+    const run = this.runs.get(id);
+    if (!run || !Array.isArray(run.stepSummaries)) return false;
+    if (run.stepSummaries.some((entry) => entry.stepId === summary.stepId)) return false;
+    if (run.stepSummaries.length >= MAX_STEP_SUMMARIES) return false;
+    run.stepSummaries.push(summary);
+    return true;
+  }
+
+  updateStepSummary(id: string, stepId: string, patch: Partial<StepSummary>): boolean {
+    const run = this.runs.get(id);
+    if (!run || !Array.isArray(run.stepSummaries)) return false;
+    const entry = run.stepSummaries.find((candidate) => candidate.stepId === stepId);
+    if (!entry) return false;
+    Object.assign(entry, patch);
+    return true;
+  }
+
+  markStepsSkipped(id: string, afterOrder: number, remainingSteps?: WorkflowStep[]): void {
+    const run = this.runs.get(id);
+    if (!run || !Array.isArray(run.stepSummaries)) return;
+    const at = new Date().toISOString();
+    // Mark in-flight steps (running/waiting when the failure happened) as skipped.
+    for (const summary of run.stepSummaries) {
+      if (summary.order <= afterOrder) continue;
+      if (summary.status === "completed" || summary.status === "failed") continue;
+      Object.assign(summary, {
+        status: "skipped" satisfies StepSummaryStatus,
+        finishedAt: summary.finishedAt ?? at
+      });
+    }
+    // Steps that never started have no summary yet; record skipped entries for them.
+    const knownIds = new Set(run.stepSummaries.map((summary) => summary.stepId));
+    if (remainingSteps) {
+      for (const [offset, step] of remainingSteps.entries()) {
+        if (knownIds.has(step.id)) continue;
+        if (run.stepSummaries.length >= MAX_STEP_SUMMARIES) break;
+        run.stepSummaries.push({
+          stepId: step.id,
+          order: afterOrder + offset + 1,
+          type: step.type,
+          status: "skipped",
+          finishedAt: at,
+          changes: []
+        });
+      }
+    }
   }
 }
 

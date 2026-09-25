@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CreateWorkflowInput, StepType, Workflow, WorkflowRun, WorkflowStep } from "../../shared/types";
 import { api } from "./api";
+import { StepTimeline } from "./StepTimeline";
 
 const emptySteps: WorkflowStep[] = [{ id: crypto.randomUUID(), type: "log", message: "Hello from my workflow" }];
 
@@ -21,8 +22,18 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [showAllLogs, setShowAllLogs] = useState(false);
 
   const selected = useMemo(() => workflows.find((workflow) => workflow.id === selectedId), [selectedId, workflows]);
+  const visibleLogs = useMemo(() => {
+    if (!run || showAllLogs) return run?.logs ?? [];
+    // Long log tails are rendered on demand so polling a chatty run cannot freeze the page.
+    return run.logs.slice(-200);
+  }, [run, showAllLogs]);
+
+  useEffect(() => {
+    setShowAllLogs(false);
+  }, [run?.id]);
 
   useEffect(() => {
     api.listWorkflows().then(({ workflows: loaded }) => {
@@ -128,7 +139,47 @@ export function App() {
             </div>
           </div>
 
-          <section className="run-card"><div className="run-header"><div><p className="eyebrow">OBSERVABILITY</p><h2>Latest run</h2></div>{run ? <span className={`status ${run.status}`}><i /> {run.status}</span> : <span className="status idle"><i /> not started</span>}</div>{run ? <div className="run-content"><div className="run-meta"><span>RUN ID <strong>{run.id.slice(0, 8)}…</strong></span><span>STARTED <strong>{new Date(run.startedAt).toLocaleTimeString()}</strong></span><span>VARIABLES <strong>{Object.keys(run.variables).length}</strong></span></div><div className="log-console">{run.logs.map((log, index) => <div className={`log-line ${log.level}`} key={`${log.at}-${index}`}><time>{new Date(log.at).toLocaleTimeString()}</time><span className="log-bullet">{log.level === "error" ? "!" : "›"}</span><span>{log.message}</span></div>)}{run.logs.length === 0 && <span className="muted">Waiting for execution…</span>}</div></div> : <div className="empty-run"><span className="pulse">◌</span><p>Run this workflow to see live execution logs and variables.</p></div>}</section>
+          <section className="run-card">
+            <div className="run-header">
+              <div>
+                <p className="eyebrow">OBSERVABILITY</p>
+                <h2>Latest run</h2>
+              </div>
+              {run ? <span className={`status ${run.status}`}><i /> {run.status}</span> : <span className="status idle"><i /> not started</span>}
+            </div>
+            {run ? (
+              <div className="run-content">
+                <div className="run-meta">
+                  <span>RUN ID <strong>{run.id.slice(0, 8)}…</strong></span>
+                  <span>STARTED <strong>{new Date(run.startedAt).toLocaleTimeString()}</strong></span>
+                  <span>VARIABLES <strong>{Object.keys(run.variables).length}</strong></span>
+                </div>
+
+                <StepTimeline steps={selected?.steps ?? steps} run={run} />
+
+                <div className="log-console">
+                  {!showAllLogs && run.logs.length > 200 && (
+                    <button className="log-more" onClick={() => setShowAllLogs(true)}>
+                      还有 {run.logs.length - 200} 条更早的日志，点击全部加载
+                    </button>
+                  )}
+                  {visibleLogs.map((log, index) => (
+                    <div className={`log-line ${log.level}`} key={`${log.at}-${index}`}>
+                      <time>{new Date(log.at).toLocaleTimeString()}</time>
+                      <span className="log-bullet">{log.level === "error" ? "!" : "›"}</span>
+                      <span>{log.message}</span>
+                    </div>
+                  ))}
+                  {run.logs.length === 0 && <span className="muted">Waiting for execution…</span>}
+                </div>
+              </div>
+            ) : (
+              <div className="empty-run">
+                <span className="pulse">◌</span>
+                <p>Run this workflow to see live execution logs and variables.</p>
+              </div>
+            )}
+          </section>
         </section>
       </div>
     </main>
